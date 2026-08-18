@@ -19,6 +19,23 @@ template is an independently deployable configuration scaffold. Its roots own
 backend coordinates, non-sensitive values, and state; they do not use
 cross-root references.
 
+## Workflow Contract
+
+[GitHub Actions] Define the reusable workflow contract before a repository
+adopts it. The caller supplies root and backend coordinates; the reusable
+workflow owns execution and returns named outputs. Keep the contract visible in
+the calling workflow so reviewers can inspect the requested state boundary and
+identity path.
+
+| Contract item | Caller supplies | Workflow verifies or produces | Evidence boundary |
+| --- | --- | --- | --- |
+| Root selection | `root_path` | Checked-out directory is a Terraform root | [Gold-standard example] |
+| State selection | `state_identifier` and backend coordinates | Concurrency group and backend match selected state | [GitHub Actions] |
+| PR revision | PR head SHA | Checkout uses that SHA, not a branch tip | [Gold-standard example] |
+| Plan evidence | Artifact name | Binary plan, rendered plan, and manifest are uploaded together | [Gold-standard example] |
+| Apply request | Merged PR and selected root | One verified candidate artifact is applied | [Execution profile] |
+| Release request | Version and merge commit | Version syntax and commit relationship are checked | [Gold-standard example] |
+
 Template adoption remains descriptive. Current template README guidance refers
 to reusable workflows at `@issue-20`, while current callers use `@v1`. The
 configuration README also names `TERRAFORM_DEPLOY_AZURE_CLIENT_ID`, while the
