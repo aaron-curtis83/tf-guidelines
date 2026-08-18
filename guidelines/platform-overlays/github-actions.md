@@ -73,6 +73,51 @@ configuration and state scopes. A shared configuration identity is an observed
 organization baseline; separate identities by operation are a higher-assurance
 option, not a universal requirement.
 
+### OIDC Verification
+
+[GitHub Actions] Request only permissions required for the job that obtains an
+Azure workload token. A job that checks out source and signs in with OIDC has
+this minimum GitHub permission shape:
+
+```yaml
+permissions:
+	contents: read
+	id-token: write
+```
+
+`id-token: write` permits token retrieval. It does not grant Azure access. The
+Azure federated credential needs at least one claim condition, and Azure RBAC
+must restrict the exchanged identity to the configuration and state resources
+it needs. For newly created, renamed, or transferred repositories, prefer a
+stable repository-ID subject claim when the federated credential design permits
+it. Review both token subject and Azure RBAC; a narrow subject with broad
+subscription RBAC remains broad deployment access.
+
+| Operation | Identity capability | Trust-condition considerations | Verification |
+| --- | --- | --- | --- |
+| PR plan | Provider reads and required state access | Restrict repository and plan-workflow subject | Can initialize and plan but cannot change managed resources |
+| Merged apply | Deployment and state-write access | Restrict repository and protected branch or Environment subject | Can modify only assigned root scope |
+| Manual destroy | Destructive access for selected root | Require separate protected workflow or Environment subject | Cannot be used by plan workflow |
+| Drift detection | Read access for refresh and plan | Limit to drift workflow and target scope | Does not change resources |
+
+### State-Key Concurrency
+
+[GitHub Actions] Serialize operations by state boundary, not repository name
+or workflow file. A state-key group prevents two runs for the same state while
+allowing independent roots to proceed.
+
+```yaml
+concurrency:
+	group: terraform-${{ inputs.state_identifier }}
+	cancel-in-progress: false
+```
+
+Superseded PR validation or plan runs may be cancelled because a newer,
+unreviewed commit supersedes them. Same-state apply and destroy must serialize
+without cancelling an active run, because it may hold a backend lock or be
+changing resources. GitHub concurrency limits scheduling; it does not replace
+Terraform backend locking.
+
 ## Saved Plan Provenance
 
 [GitHub Actions] [Gold-standard example] Pull-request workflows plan changed
@@ -88,6 +133,74 @@ This provenance chain does not establish reviewer approval, an immutable or
 attested artifact, or an independent apply approval. Branch protection,
 pull-request review, and environment protection are separately configured
 GitHub controls.
+
+[Gold-standard example] The named artifact contains a binary plan, rendered
+plan, and manifest. Fourteen-day retention is observed local behavior, not an
+organization requirement. Produce the manifest in the same job as the plan and
+compute the checksum after the binary plan is final.
+
+```json
+{
+	"root_path": "roots/payments",
+	"state_identifier": "payments-prod",
+	"pull_request": 184,
+	"head_sha": "<pr-head-sha>",
+	"base_sha": "<pr-base-sha>",
+	"producing_run_id": "<github-run-id>",
+	"terraform_version": "1.9.8",
+	"artifact_name": "reviewed-tfplan",
+	"plan_sha256": "<sha256-of-plan.tfplan>"
+}
+```
+
+The rendered plan supports review but does not replace checksum verification.
+The manifest supplies provenance data; it does not prove approval.
+
+### Plan Procedure
+
+1. Check out the pull request's immutable head SHA.
+2. Initialize the intended backend and record the Terraform version.
+3. Validate and create the binary plan for the selected root and state.
+4. Render the binary plan, calculate its SHA-256, and write the manifest.
+5. Upload binary plan, rendered plan, and manifest as one named artifact.
+6. Record workflow run URL, PR number, head SHA, state identifier, and checksum.
+
+Stop when the job cannot identify one root, initialize the expected backend,
+produce a binary plan, or upload the matching manifest.
+
+### Merged Apply Selection and Verification
+
+[Execution profile] An apply workflow must select one successful PR-plan
+candidate, not "the latest successful run." Follow this exact algorithm:
+
+1. Identify the merged pull request and its immutable head SHA.
+2. Query successful PR-plan runs for that pull request and root.
+3. Keep only candidates whose manifest head SHA matches the merged PR head SHA.
+4. Require exactly one candidate. Stop on zero or more than one candidates.
+5. Download the named artifact from that candidate's producing run ID.
+6. Verify binary plan, rendered plan, and manifest are all present.
+7. Verify PR number, head SHA, root path, state identifier, artifact name,
+	 Terraform version policy, and binary SHA-256 against the manifest.
+8. Initialize the backend for the same root and state identifier.
+9. Run `terraform apply plan.tfplan` without creating a replacement plan.
+10. Record candidate run ID, manifest checksum, apply run ID, and outcome.
+
+Return to pull-request planning and review if any check fails. A stale or
+ambiguous candidate cannot be repaired by generating a fresh plan during apply.
+
+```yaml
+- name: Verify selected plan
+	run: |
+		verify_manifest --pr "$PR_NUMBER" --head "$MERGED_HEAD_SHA" \
+			--root "$ROOT_PATH" --state "$STATE_IDENTIFIER" \
+			--artifact "reviewed-tfplan" --plan plan.tfplan
+
+- name: Apply selected plan
+	run: terraform apply -input=false plan.tfplan
+```
+
+`verify_manifest` is repository-owned pseudocode. It must fail closed on every
+mismatch in the selection algorithm.
 
 ## Destroy, Quality, and Release
 
@@ -110,6 +223,39 @@ major compatibility tag for non-release-candidate releases.
 Release-tag protection, signing, and supply-chain review settings are not
 verified. Treat them as configuration gaps until their owning policy is
 published.
+
+### Manual Destroy and Drift
+
+[GitHub Actions] Run drift detection as a separately identifiable
+read-oriented operation. Record root, state identifier, configuration commit,
+identity, command mode, and result. Do not apply drift output automatically.
+Use the delivery process to decide whether configuration or remote
+infrastructure must change.
+
+[Gold-standard example] Destroy is manually initiated, root-scoped,
+state-key serialized, and based on a saved destroy plan. Use a confirmed state
+identifier input, a separate destructive identity, a protected destroy
+workflow or Environment where configured, and an evidence record. The current
+`terraform-destroy` Environment pattern does not prove any reviewer setting.
+
+* Confirm root and state identifier in both request and workflow input
+* Produce, render, checksum, and retain a destroy plan before execution
+* Serialize by state identifier without cancelling an active state run
+* Record configured Environment or branch-control outcome
+* Apply only the reviewed destroy plan and record remaining resources and state result
+
+### CI and Release Evidence
+
+| Change | Minimum CI evidence | Release evidence when applicable |
+| --- | --- | --- |
+| Module contract change | Formatter, validate, tests, and consumer plan | Version decision and compatibility note |
+| Provider or Terraform constraint change | Constraint and lock-file review with representative tests | Minimum supported version and release notes |
+| Root infrastructure change | Rendered plan, manifest, and selected apply evidence | Not applicable unless root publishes an interface |
+| Release candidate | CI result and target commit | Candidate version, commit, release URL, and tag decision |
+
+[Gap] Release-tag protection, signing, artifact attestation, Environment
+reviewers, and supply-chain review settings are not verified. Do not infer them
+from a successful workflow run.
 
 ## Related Guidance
 
