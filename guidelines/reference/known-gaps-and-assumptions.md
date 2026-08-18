@@ -20,8 +20,8 @@ records an approved disposition.
 | DR-02 | `[Assumption]`           | Independent child-module consumption and release | Module governance owner      | Medium | Keep nested children bundled with their parent; do not promise independent release streams      |
 | DR-03 | `[Gap]`                  | Markdown, frontmatter, and link validation tooling | Documentation platform owner | Medium | Use manual checks for this release; select and configure automated validation before publication |
 | DR-04 | `[Gap]`                  | Route usability validation                  | Guideline product owner         | Medium | Pending human validation: delivery leader authors a bespoke module, contributor upgrades a published module, and client operator locates handover evidence |
-| DD-02 | `[Gap]`                  | GitHub reusable workflow reference conflict | Template and workflow owners    | High   | README states `@issue-20`; callers use `@v1`. Keep adoption instructions descriptive            |
-| DD-02 | `[Gap]`                  | GitHub apply-client secret-name conflict    | Configuration template owner    | High   | README states `TERRAFORM_DEPLOY_AZURE_CLIENT_ID`; caller uses `TERRAFORM_APPLY_CLIENT_ID`. Do not publish either as the approved contract |
+| DD-02 | `[Gap]`                  | GitHub template contract drift               | Template and workflow owners    | High   | Documentation and callers were not verified in the restricted executable-source review. Inspect both before publishing a workflow reference or secret-name contract |
+| DD-05 | `[Gap]`                  | GitHub executable-source discovery           | Template and workflow owners    | High   | Only a reusable validation workflow and disabled PR-plan and merged-apply references were reviewed. Discover enabled callers and their platform configuration before declaring a broader GitHub baseline |
 
 ### Register Interpretation
 
@@ -46,7 +46,8 @@ registry model remains unresolved.
 | DR-02 nested-module consumption | Bespoke authoring | Keep child modules bundled with parent unless governance decides otherwise |
 | DR-03 documentation checks | Every changed guideline page | Use manual frontmatter, link, label, and diagnostic checks |
 | DR-04 route usability | All routes | Schedule human task walkthroughs before declaring usability validated |
-| DD-02 template drift | GitHub Actions overlay | Keep adoption instruction descriptive pending reconciliation |
+| DD-02 template drift | GitHub Actions overlay | Keep adoption instructions descriptive until documentation and executable callers are reviewed together |
+| DD-05 executable-source discovery | GitHub Actions overlay | Treat local examples as bounded references until enabled callers and platform configuration are independently reviewed |
 
 ### Original Escalation Record
 
@@ -68,23 +69,22 @@ procedure or require a particular backend.
 
 ## GitHub Template Drift
 
-[GitHub Actions] [Gold-standard example] Local evidence verifies that current
-callers use `@v1` and `TERRAFORM_APPLY_CLIENT_ID`. It also verifies that the
-template READMEs use `@issue-20` and
-`TERRAFORM_DEPLOY_AZURE_CLIENT_ID`, respectively. The source mismatch does not
-identify the intended published contract.
+[Gap] The restricted executable-source review did not verify GitHub template
+READMEs, enabled callers, a workflow-version reference, or a template-specific
+apply-client secret name. Do not publish an adoption directive from README text
+or infer that a caller is current without inspecting it.
 
-Both conflicts remain unresolved. The GitHub Actions overlay may describe the
-observed implementation, but it must not direct template adopters to use a
-specific workflow reference or apply-client secret name until the owning
-repositories reconcile the README and executable contracts.
+The available executable sources demonstrate only a reusable validation
+workflow plus disabled PR-plan and merged-apply references. They use
+`AZURE_PLAN_CLIENT_ID` and `AZURE_DEPLOY_CLIENT_ID` in those references, but
+that observation does not establish a published template contract.
 
 ### Template Drift Verification
 
 Before changing this gap, inspect both the documentation and the executable
 caller or workflow source. Record the exact reference, secret name, repository
-path, and revision reviewed. Do not close the gap because one source changes
-in isolation.
+path, revision reviewed, and whether the workflow is enabled. Do not close the
+gap because one source changes in isolation.
 
 | Check | Evidence needed | Do not infer |
 | --- | --- | --- |
@@ -92,10 +92,6 @@ in isolation.
 | Apply-client secret | README and caller agree on the supported name | That the identity claim and RBAC are approved |
 | Reusable workflow inputs | Contract documentation matches executable interface | That all callers have adopted the new interface |
 | Environment controls | Platform configuration is independently verified | That workflow YAML proves reviewer rules |
-
-[GitHub Actions] [Gold-standard example] Current callers using `@v1` and
-`TERRAFORM_APPLY_CLIENT_ID` are observed implementation details. They remain
-descriptive until the repository owners reconcile the contract.
 
 ## Pending Human Route Validation
 

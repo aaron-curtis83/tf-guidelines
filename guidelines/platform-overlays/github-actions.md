@@ -1,259 +1,202 @@
 ---
 title: GitHub Actions Delivery Overlay
-description: GitHub Actions controls and internal examples for runner-managed Terraform delivery
+description: Executable-source-bounded GitHub Actions guidance for Terraform validation and reviewed plans
 ---
 
 ## Scope
 
-[GitHub Actions] Use this overlay only with the
-[runner-managed reviewed plan profile](../execution-profiles/runner-managed-reviewed-plan.md).
-It records verified GitHub workflow-contract examples. It does not prescribe an
-organization-wide GitHub baseline.
+[GitHub Actions] Use this overlay with the
+[runner-managed reviewed plan profile](../execution-profiles/runner-managed-reviewed-plan.md)
+only when a repository implements that model. The local sources demonstrate a
+reusable validation workflow and two disabled template-reference workflows.
+They are examples of workflow mechanics, not an enabled deployment baseline or
+an organization-wide GitHub Actions contract.
 
-## Template Adoption
+> [!IMPORTANT]
+> Executable workflow YAML is the local behavioral evidence for this overlay.
+> README text can identify a documentation discrepancy, but cannot establish
+> delivery behavior.
 
-[GitHub Actions] [Gold-standard example] The module template is a reusable
-module scaffold. Generated modules replace placeholder assertions and configure
-validation, unit testing, and optional integration testing. The configuration
-template is an independently deployable configuration scaffold. Its roots own
-backend coordinates, non-sensitive values, and state; they do not use
-cross-root references.
+## Reusable Validation
 
-## Workflow Contract
+[GitHub Actions] [Gold-standard example] The reusable validation workflow
+accepts one required string input named `working-directory`. It grants
+`contents: read`, sets that input as the default working directory, then runs
+`terraform fmt -check -recursive`, `terraform init -backend=false -input=false`,
+and `terraform validate -no-color`.
 
-[GitHub Actions] Define the reusable workflow contract before a repository
-adopts it. The caller supplies root and backend coordinates; the reusable
-workflow owns execution and returns named outputs. Keep the contract visible in
-the calling workflow so reviewers can inspect the requested state boundary and
-identity path.
-
-| Contract item | Caller supplies | Workflow verifies or produces | Evidence boundary |
-| --- | --- | --- | --- |
-| Root selection | `root_path` | Checked-out directory is a Terraform root | [Gold-standard example] |
-| State selection | `state_identifier` and backend coordinates | Concurrency group and backend match selected state | [GitHub Actions] |
-| PR revision | PR head SHA | Checkout uses that SHA, not a branch tip | [Gold-standard example] |
-| Plan evidence | Artifact name | Binary plan, rendered plan, and manifest are uploaded together | [Gold-standard example] |
-| Apply request | Merged PR and selected root | One verified candidate artifact is applied | [Execution profile] |
-| Release request | Version and merge commit | Version syntax and commit relationship are checked | [Gold-standard example] |
-
-## Reusable Workflow Contract
-
-[GitHub Actions] [Gold-standard example] Callers invoke versioned
-`workflow_call` workflows, pass named `with` inputs, and map named `secrets`.
-Configuration lifecycle callers provide the working directory, AzureRM backend
-resource group, storage account, container, state key, and optional variable
-file or artifact name. Plan exposes `has-changes`; release receives a
-title-derived semantic version and target merge commit.
-
-Record required and optional inputs with the selected reusable-workflow version
-rather than duplicating workflow YAML. The current internal callers reference
-the workflow library at `@v1`; that is an example, not an organization-wide
-versioning policy.
-
-## Identity and State Controls
-
-[GitHub Actions] [Gold-standard example] Plan and drift use a read-oriented
-OIDC client identity, apply uses a deployment identity, and destroy uses a
-destructive identity. The workflows request `id-token: write`, use
-`Azure/login@v3`, and set `ARM_USE_OIDC`.
-
-[GitHub Actions] [Gold-standard example] A lowercase-kebab workload slug and
-environment slug derive a state key of
-`<workload-slug>-<environment-slug>.tfstate`. Lifecycle operations serialize
-by state key. Keep one state per independently deployable root.
-
-[Practice recommendation] Restrict federated identity claims and RBAC to the
-configuration and state scopes. A shared configuration identity is an observed
-organization baseline; separate identities by operation are a higher-assurance
-option, not a universal requirement.
-
-### OIDC Verification
-
-[GitHub Actions] Request only permissions required for the job that obtains an
-Azure workload token. A job that checks out source and signs in with OIDC has
-this minimum GitHub permission shape:
+The workflow skips template repositories with
+`github.event.repository.is_template == false`. That condition and the
+backend-free initialization keep validation focused on configuration syntax and
+formatting. They do not validate remote backend access, provider credentials,
+or a deployable plan.
 
 ```yaml
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+
 permissions:
-	contents: read
-	id-token: write
+  contents: read
+
+jobs:
+  validate:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
 ```
 
-`id-token: write` permits token retrieval. It does not grant Azure access. The
-Azure federated credential needs at least one claim condition, and Azure RBAC
-must restrict the exchanged identity to the configuration and state resources
-it needs. For newly created, renamed, or transferred repositories, prefer a
-stable repository-ID subject claim when the federated credential design permits
-it. Review both token subject and Azure RBAC; a narrow subject with broad
-subscription RBAC remains broad deployment access.
+[Practice recommendation] A caller should pass a reviewed Terraform
+configuration directory, not a user-controlled arbitrary path. Add any
+repository-specific root-selection rules to the caller or workflow contract
+after their executable implementation is available.
 
-| Operation | Identity capability | Trust-condition considerations | Verification |
-| --- | --- | --- | --- |
-| PR plan | Provider reads and required state access | Restrict repository and plan-workflow subject | Can initialize and plan but cannot change managed resources |
-| Merged apply | Deployment and state-write access | Restrict repository and protected branch or Environment subject | Can modify only assigned root scope |
-| Manual destroy | Destructive access for selected root | Require separate protected workflow or Environment subject | Cannot be used by plan workflow |
-| Drift detection | Read access for refresh and plan | Limit to drift workflow and target scope | Does not change resources |
+## Disabled PR Plan Reference
 
-### State-Key Concurrency
+[GitHub Actions] [Gold-standard example] The local PR-plan reference is
+guarded by a literal `TEMPLATE_REFERENCE_ENABLED: false`. If a generated
+configuration repository deliberately adapts it, the shown job runs only after
+that repository changes the guard and establishes its own controls.
 
-[GitHub Actions] Serialize operations by state boundary, not repository name
-or workflow file. A state-key group prevents two runs for the same state while
-allowing independent roots to proceed.
+When enabled by such a repository, the reference workflow:
 
-```yaml
-concurrency:
-	group: terraform-${{ inputs.state_identifier }}
-	cancel-in-progress: false
-```
+1. Runs for pull requests targeting `main`.
+2. Checks out `github.event.pull_request.head.sha`, rather than an implicit
+   branch tip.
+3. Requests `contents: read` and `id-token: write`.
+4. Uses `azure/login@v2` with plan client, tenant, and subscription values.
+5. Runs `terraform plan -input=false -out=plan.tfplan`.
+6. Renders that binary plan to `plan.txt`.
+7. Calculates the SHA-256 checksum of `plan.tfplan`.
+8. Uploads `plan.tfplan`, `plan.txt`, and `plan-manifest.json` in the named
+   `reviewed-tfplan` artifact for 14 days.
 
-Superseded PR validation or plan runs may be cancelled because a newer,
-unreviewed commit supersedes them. Same-state apply and destroy must serialize
-without cancelling an active run, because it may hold a backend lock or be
-changing resources. GitHub concurrency limits scheduling; it does not replace
-Terraform backend locking.
+`id-token: write` allows the job to request an OpenID Connect token. The source
+does not provide the corresponding federated-credential claims or Azure RBAC,
+so it does not prove the granted Azure access scope.
 
-## Saved Plan Provenance
+### Evidence Manifest
 
-[GitHub Actions] [Gold-standard example] Pull-request workflows plan changed
-roots, save `terraform.tfplan` and rendered evidence under
-`.terraform-workflow`, and upload a named plan artifact with 14-day retention.
-After merge, the apply workflow selects a successful pull-request workflow run
-whose `head_sha` equals the merged pull request head SHA. It downloads the
-named artifact from that exact run, verifies `terraform.tfplan`, initializes
-the matching backend, and applies the saved binary plan without creating a
-replacement plan on `main`.
-
-This provenance chain does not establish reviewer approval, an immutable or
-attested artifact, or an independent apply approval. Branch protection,
-pull-request review, and environment protection are separately configured
-GitHub controls.
-
-[Gold-standard example] The named artifact contains a binary plan, rendered
-plan, and manifest. Fourteen-day retention is observed local behavior, not an
-organization requirement. Produce the manifest in the same job as the plan and
-compute the checksum after the binary plan is final.
+[Gold-standard example] The reference creates the following JSON document with
+`jq` in the plan-producing job. These are the complete evidenced manifest
+fields. Root selection, state identifiers, artifact names, and approval facts
+are not manifest fields in the local reference.
 
 ```json
 {
-	"root_path": "roots/payments",
-	"state_identifier": "payments-prod",
-	"pull_request": 184,
-	"head_sha": "<pr-head-sha>",
-	"base_sha": "<pr-base-sha>",
-	"producing_run_id": "<github-run-id>",
-	"terraform_version": "1.9.8",
-	"artifact_name": "reviewed-tfplan",
-	"plan_sha256": "<sha256-of-plan.tfplan>"
+  "schemaVersion": 1,
+  "prNumber": "<pull-request-number>",
+  "headSha": "<pull-request-head-sha>",
+  "baseSha": "<pull-request-base-sha>",
+  "planRunId": "<plan-workflow-run-id>",
+  "terraformVersion": "<terraform-version>",
+  "planSha256": "<sha256-of-plan.tfplan>"
 }
 ```
 
-The rendered plan supports review but does not replace checksum verification.
-The manifest supplies provenance data; it does not prove approval.
+[GitHub Actions] [Gold-standard example] The artifact retention is 14 days in
+this disabled reference. It is not an organization retention requirement.
+The rendered text supports review, while the binary-plan checksum is the
+mechanism used by the reference to detect a changed plan file.
 
-### Plan Procedure
+## Disabled Merged Apply Reference
 
-1. Check out the pull request's immutable head SHA.
-2. Initialize the intended backend and record the Terraform version.
-3. Validate and create the binary plan for the selected root and state.
-4. Render the binary plan, calculate its SHA-256, and write the manifest.
-5. Upload binary plan, rendered plan, and manifest as one named artifact.
-6. Record workflow run URL, PR number, head SHA, state identifier, and checksum.
+[GitHub Actions] [Gold-standard example] The merged-apply reference responds
+to closed pull requests targeting `main`, then proceeds only for merged pull
+requests and only while its template guard remains deliberately changed from
+the supplied `false` value.
 
-Stop when the job cannot identify one root, initialize the expected backend,
-produce a binary plan, or upload the matching manifest.
+Its selection and verification sequence is specific and fail-closed:
 
-### Merged Apply Selection and Verification
+1. Locate the workflow whose name equals `Template Reference PR Terraform Plan`.
+2. Require exactly one workflow with that name.
+3. Locate successful pull-request runs associated with the merged pull request.
+4. Require exactly one candidate run.
+5. Download the `reviewed-tfplan` artifact from that run into `reviewed-plan`.
+6. Require `reviewed-plan/plan-manifest.json` and
+   `reviewed-plan/plan.tfplan` to exist.
+7. Verify `schemaVersion`, PR number, head SHA, base SHA, producing plan run
+   ID, and the binary plan's SHA-256 against the manifest.
+8. Authenticate with `azure/login@v2` using the deploy client-ID secret.
+9. Initialize Terraform and run
+   `terraform apply -input=false reviewed-plan/plan.tfplan`.
 
-[Execution profile] An apply workflow must select one successful PR-plan
-candidate, not "the latest successful run." Follow this exact algorithm:
-
-1. Identify the merged pull request and its immutable head SHA.
-2. Query successful PR-plan runs for that pull request and root.
-3. Keep only candidates whose manifest head SHA matches the merged PR head SHA.
-4. Require exactly one candidate. Stop on zero or more than one candidates.
-5. Download the named artifact from that candidate's producing run ID.
-6. Verify binary plan, rendered plan, and manifest are all present.
-7. Verify PR number, head SHA, root path, state identifier, artifact name,
-	 Terraform version policy, and binary SHA-256 against the manifest.
-8. Initialize the backend for the same root and state identifier.
-9. Run `terraform apply plan.tfplan` without creating a replacement plan.
-10. Record candidate run ID, manifest checksum, apply run ID, and outcome.
-
-Return to pull-request planning and review if any check fails. A stale or
-ambiguous candidate cannot be repaired by generating a fresh plan during apply.
+The source checks the manifest head SHA against the merged pull request head
+SHA. It does not use a fresh post-merge plan. It also does not verify that
+`plan.txt` exists during apply, even though the PR-plan reference uploads it.
 
 ```yaml
-- name: Verify selected plan
-	run: |
-		verify_manifest --pr "$PR_NUMBER" --head "$MERGED_HEAD_SHA" \
-			--root "$ROOT_PATH" --state "$STATE_IDENTIFIER" \
-			--artifact "reviewed-tfplan" --plan plan.tfplan
+- name: Verify saved-plan provenance
+  run: |
+    test "$(jq -r .prNumber "$manifest")" = "$PR_NUMBER"
+    test "$(jq -r .headSha "$manifest")" = "$HEAD_SHA"
+    test "$(jq -r .baseSha "$manifest")" = "$BASE_SHA"
+    test "$(jq -r .planRunId "$manifest")" = "$RUN_ID"
+    test "$(sha256sum "$plan" | cut -d ' ' -f 1)" = "$(jq -r .planSha256 "$manifest")"
 
-- name: Apply selected plan
-	run: terraform apply -input=false plan.tfplan
+- name: Apply saved plan
+  run: terraform apply -input=false reviewed-plan/plan.tfplan
 ```
 
-`verify_manifest` is repository-owned pseudocode. It must fail closed on every
-mismatch in the selection algorithm.
+[Execution profile] Applying the selected binary plan preserves the reviewed
+plan input. It does not establish reviewer approval, artifact attestation,
+or an independently configured deployment approval.
 
-## Destroy, Quality, and Release
+## Identity Boundary
 
-[GitHub Actions] [Gold-standard example] Destroy is manually initiated,
-root-scoped, state-key serialized, and based on a saved destroy plan. The
-workflow targets the `terraform-destroy` Environment. Its reviewer protection
-is not verified from source.
+[GitHub Actions] [Gold-standard example] The disabled references use two
+different secret names for Azure login client IDs: `AZURE_PLAN_CLIENT_ID` for
+the plan job and `AZURE_DEPLOY_CLIENT_ID` for the apply job. Both also use
+tenant and subscription secrets. The source demonstrates distinct input names;
+it does not establish a separation of Azure permissions, identity ownership,
+or operation-specific RBAC.
 
-[Practice recommendation] Repositories that manage deployed Terraform state
-should protect `terraform-destroy` with an approver other than the initiator
-and no administrator bypass. Apply environment protection remains a
-risk-based local choice rather than a default requirement.
+[Gap] The local sources do not establish the federated identity's subject or
+audience claims, Azure role assignments, `ARM_USE_OIDC`, an `@v3` Azure login
+action, or a reusable workflow identity contract. Do not claim those controls
+as locally implemented behavior.
 
-[GitHub Actions] [Gold-standard example] Module CI classifies pull-request
-titles and can run validation, unit tests, documentation checks, and optional
-integration tests. Releases run for merged pull requests to `main`, validate
-the semantic version and merge commit, publish a GitHub Release, and update a
-major compatibility tag for non-release-candidate releases.
+[Practice recommendation] Before enabling an Azure-authenticated workflow,
+document the job-to-identity mapping and verify its federated claims and Azure
+permissions independently. The [GitHub OpenID Connect documentation](https://docs.github.com/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-azure)
+is authoritative for configuring GitHub's Azure OIDC integration, not these
+local template references.
 
-Release-tag protection, signing, and supply-chain review settings are not
-verified. Treat them as configuration gaps until their owning policy is
-published.
+## Controls Not Established Locally
 
-### Manual Destroy and Drift
+[Gap] The following controls are not evidenced by the available executable
+sources. A repository may implement them, but it must supply its own
+executable evidence or approved policy before this guidance describes them as
+local behavior.
 
-[GitHub Actions] Run drift detection as a separately identifiable
-read-oriented operation. Record root, state identifier, configuration commit,
-identity, command mode, and result. Do not apply drift output automatically.
-Use the delivery process to decide whether configuration or remote
-infrastructure must change.
+| Control area | Not established by the sources |
+| --- | --- |
+| Reusable lifecycle contract | `workflow_call` plan or apply contracts, named lifecycle inputs or secrets, `@v1`, and `has-changes` outputs |
+| State orchestration | Derived state keys, working-root selection beyond validation, changed-root detection, concurrency, and cancellation behavior |
+| Lifecycle operations | Destroy, drift detection, module CI, release or tag automation, and post-apply checks |
+| GitHub protection | GitHub Environments, reviewer protection, branch protection, artifact attestation, signing, and retention policy |
+| Identity model | Operation-specific identity permissions beyond the distinct plan and deploy client-secret names |
 
-[Gold-standard example] Destroy is manually initiated, root-scoped,
-state-key serialized, and based on a saved destroy plan. Use a confirmed state
-identifier input, a separate destructive identity, a protected destroy
-workflow or Environment where configured, and an evidence record. The current
-`terraform-destroy` Environment pattern does not prove any reviewer setting.
+## Adoption Checklist
 
-* Confirm root and state identifier in both request and workflow input
-* Produce, render, checksum, and retain a destroy plan before execution
-* Serialize by state identifier without cancelling an active state run
-* Record configured Environment or branch-control outcome
-* Apply only the reviewed destroy plan and record remaining resources and state result
+When adapting the disabled references in a generated repository, record the
+repository's choices rather than inheriting unstated assumptions:
 
-### CI and Release Evidence
-
-| Change | Minimum CI evidence | Release evidence when applicable |
-| --- | --- | --- |
-| Module contract change | Formatter, validate, tests, and consumer plan | Version decision and compatibility note |
-| Provider or Terraform constraint change | Constraint and lock-file review with representative tests | Minimum supported version and release notes |
-| Root infrastructure change | Rendered plan, manifest, and selected apply evidence | Not applicable unless root publishes an interface |
-| Release candidate | CI result and target commit | Candidate version, commit, release URL, and tag decision |
-
-[Gap] Release-tag protection, signing, artifact attestation, Environment
-reviewers, and supply-chain review settings are not verified. Do not infer them
-from a successful workflow run.
+* Remove or retain the template guard only through that repository's reviewed change process
+* Identify the Terraform configuration directory and backend behavior
+* Define the federated-credential and Azure RBAC evidence outside workflow YAML
+* Preserve the manifest fields and saved-plan checksum checks when using the reviewed-plan model
+* Decide artifact retention, reviewer controls, and deployment authorization with the owning policy or platform team
+* Add executable tests for any root selection, concurrency, destroy, drift, release, or reusable-workflow behavior introduced by the repository
 
 ## Related Guidance
 
 Use [testing and change assurance](../core/testing-and-change-assurance.md)
-for portable assurance requirements and the
+for portable assurance requirements, the
 [runner-managed reviewed plan profile](../execution-profiles/runner-managed-reviewed-plan.md)
-for the cross-platform plan model.
+for saved-plan semantics, and
+[known gaps and assumptions](../reference/known-gaps-and-assumptions.md)
+for unresolved GitHub template and platform decisions.

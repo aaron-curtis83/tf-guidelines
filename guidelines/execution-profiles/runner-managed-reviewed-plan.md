@@ -209,6 +209,78 @@ Do not start destroy during another same-state operation.
 Use [GitHub Actions](../platform-overlays/github-actions.md) or
 [Azure DevOps](../platform-overlays/azure-devops.md) for adapter mechanics.
 
+## Apply the Selected Plan
+
+An authorized runner may apply a saved plan only after every provenance
+invariant is checked against the plan manifest. The checks bind an existing
+candidate to its intended state. They do not create an approval, override a
+failed policy, or establish an artifact-retention rule.
+
+1. Stop if another operation owns the same state boundary.
+2. Locate the artifact using the manifest's immutable revision, root path, and
+  state identifier. Do not select an artifact by branch name or recency.
+3. Verify the artifact name, plan filename, and checksum against the manifest.
+4. Verify the recorded planning revision is the intended delivery revision.
+5. Verify referenced validation, review, policy, and approval evidence is
+  present, or stop on the applicable unresolved decision.
+6. Initialize the intended root with its matching backend arrangement.
+7. Apply the exact downloaded plan file and record the resulting exit status.
+8. Release coordination only after the result and recovery contact are written
+  to the delivery record.
+
+[Terraform universal] When `terraform apply` receives a saved plan file, it
+executes the operations in that plan without prompting for confirmation and
+does not accept additional planning modes or options. See HashiCorp's
+[saved plan mode documentation](https://developer.hashicorp.com/terraform/cli/commands/apply#saved-plan-mode).
+
+> [!CAUTION]
+> A failed provenance check is not a reason to create an unreviewed replacement
+> plan. A fresh plan is a new candidate, so it requires a new review and
+> decision process before it can be selected.
+
+## Apply Receipt
+
+Record a receipt that connects the selected artifact to the completed runner
+operation. Use authorized locators rather than including plan output or secret
+values in the record.
+
+```text
+root_path: roots/payments
+state_identifier: payments-production
+planned_revision: 8c4f6a1
+artifact_name: payments-production-plan
+plan_file: terraform.tfplan
+checksum_sha256: <verified-value>
+planning_run: <run-locator>
+apply_run: <run-locator>
+apply_started: <timestamp>
+apply_result: applied | failed | blocked
+review_evidence: <locator>
+policy_evidence: <locator-or-gap>
+approval_evidence: <locator-or-gap>
+recovery_contact: <role-or-escalation-reference>
+```
+
+This is an original record format. It proves that the runner checked and used a
+selected artifact only to the extent supported by the recorded evidence.
+
+## Failure Response
+
+| Failure point | Immediate response | Follow-up evidence |
+| --- | --- | --- |
+| Artifact cannot be retrieved | Block the apply and report an expired or missing artifact | Manifest, retrieval result, recovery contact |
+| Checksum or manifest mismatch | Reject the artifact and investigate its source | Expected and observed identifiers, not plan content |
+| State lock or coordination conflict | Wait or use the approved coordination process | Active operation and owner |
+| Terraform reports a stale plan | Do not retry the file; create a new reviewed candidate | Error output locator and replacement decision |
+| Apply fails after changes begin | Stop automatic retries and assess current state with the state owner | Apply result, state assessment, escalation record |
+| Rendered output exposes sensitive data | Restrict access and remove the unintended copy under the approved process | Exposure incident locator and owner |
+
+[Terraform universal] Saved plan files contain full configuration, input
+values, and plan options. Sensitive values that may be obscured in terminal
+output are saved in cleartext in the plan file. Treat every saved plan as a
+potentially sensitive artifact. See HashiCorp's
+[plan output documentation](https://developer.hashicorp.com/terraform/cli/commands/plan#out-filename).
+
 ## Verification and Handover
 
 Verify root, state, revision, validation run, artifact, checksum, coordination,

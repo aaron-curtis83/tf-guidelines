@@ -208,6 +208,78 @@ Do not add tokens, credentials, or variable values.
 | Auto-apply assumed | Authority unclear | Record configuration |
 | Secret in handover | Confidentiality failure | Remove values |
 
+## Run Stages and Evidence
+
+[HCP Terraform] A run progresses through queued, plan, optional cost and
+policy checks, apply, and completion stages. Optional run-task stages can also
+occur before or after planning and applying. The stages that actually occur
+depend on the workspace and organization configuration. See HashiCorp's
+[run states and stages documentation](https://developer.hashicorp.com/terraform/cloud-docs/run/states).
+
+Record the normal run's observed stages, not a claimed universal workflow.
+For example, a workspace without enabled policy sets does not produce policy
+evidence, while a workspace with a policy check can pause or fail according to
+its enforcement level.
+
+| Stage or outcome | Operator decision | Handover evidence |
+| --- | --- | --- |
+| Pending or fetching | Confirm the normal run targets the intended workspace and merged revision | Workspace and run locator |
+| Plan complete | Review proposed actions for the normal run | Plan view and revision |
+| Policy check | Record every applied policy-set result and any permitted override | Policy result, enforcement, override locator |
+| Needs confirmation | Confirm or discard only through an authorized workspace path | Manual confirmation or discard record |
+| Auto-apply path | Record that the workspace applied according to its configured behavior | Workspace setting reference and applied run |
+| Applied or planned and finished | Record the terminal result and verification reference | Final run state and timestamp |
+| Plan or apply errored | Stop automatic progression and route to the named owner | Error locator, state owner, next decision |
+
+[HCP Terraform] Policy sets can apply globally or at project or workspace
+scope. HCP Terraform evaluates the plan against policy sets that apply to the
+workspace, and enforcement results can stop or pause a run. See HashiCorp's
+[policy enforcement overview](https://developer.hashicorp.com/terraform/cloud-docs/policy-enforcement).
+
+[Gap] The existence of a policy feature does not establish that this
+organization assigns a particular policy set, permits overrides, requires
+manual confirmation, or enables auto-apply for any workspace.
+
+## Failure Handling
+
+Use the terminal HCP run state and workspace evidence to decide the next
+action. Do not create a runner-managed plan to bypass a blocked workspace run.
+
+| Condition | Immediate response | Do not do |
+| --- | --- | --- |
+| Speculative run is stale after the target branch changes | Review the appropriate normal run after merge or update PR review context | Apply the older speculative result |
+| VCS fetch or plan fails | Correct the configuration, variables, or VCS mapping and let a new run represent the corrected input | Reclassify the failed run as approved |
+| Policy check fails | Follow the configured enforcement and authorized override or discard path | Treat a policy failure as advisory without evidence |
+| Plan awaits confirmation | Identify the authorized workspace path and record the decision | Infer approval from PR status |
+| Apply errors or is canceled | Stop follow-on runs, assess state with the state owner, and record the next recovery decision | Start a second apply authority or edit state directly |
+| A normal run is absent for a merged revision | Inspect workspace VCS mapping and trigger evidence, then use the workspace's supported path | Substitute the PR speculative run |
+
+## Original Run Handover Record
+
+Use this original record to preserve the distinction between PR review and the
+normal run that could apply the merged revision.
+
+```text
+root: roots/networking
+workspace: networking-production
+workspace_locator: <approved-workspace-reference>
+repository: platform-infrastructure
+working_directory: roots/networking
+tracked_branch: main
+merged_revision: 8c4f6a1
+speculative_review_run: <optional-pr-run-locator>
+normal_run: <required-normal-run-locator>
+normal_run_terminal_state: applied | planned-and-finished | errored | discarded
+policy_results: <applied-policy-result-locators-or-none-observed>
+apply_decision: manual-confirmation | auto-apply | discarded
+state_owner: <role-or-escalation-reference>
+recovery_contact: <role-or-escalation-reference>
+```
+
+Do not include variable values, tokens, state data, or plan output. A listed
+speculative run supplies review context only and is not evidence that HCP
+Terraform applied that PR plan.
+
 ## Verification and Handover
 
 Verify root, workspace, repository, directory, branch, normal run, policy
