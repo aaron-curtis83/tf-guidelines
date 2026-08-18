@@ -36,12 +36,6 @@ identity path.
 | Apply request | Merged PR and selected root | One verified candidate artifact is applied | [Execution profile] |
 | Release request | Version and merge commit | Version syntax and commit relationship are checked | [Gold-standard example] |
 
-Template adoption remains descriptive. Current template README guidance refers
-to reusable workflows at `@issue-20`, while current callers use `@v1`. The
-configuration README also names `TERRAFORM_DEPLOY_AZURE_CLIENT_ID`, while the
-apply caller uses `TERRAFORM_APPLY_CLIENT_ID`. Do not treat either documented
-name as an approved adoption contract until the discrepancy is reconciled.
-
 ## Reusable Workflow Contract
 
 [GitHub Actions] [Gold-standard example] Callers invoke versioned
